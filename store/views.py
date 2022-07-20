@@ -1,13 +1,15 @@
+from django.contrib import messages
 from django.db.models import Q
 from django.http import HttpResponse
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import redirect, render, get_object_or_404
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.views import View
 from cart.models import CartItem
 from cart.views import _cart_id
 from category.models import Category
-from store.models import Product
-
+from orders.models import OrderProduct
+from store.models import Product, ProductGallery, ReviewRating
+from .forms import ReviewForm
 
 def store(request, category_slug=None):
     categories = None
@@ -43,13 +45,27 @@ class ProductDetail(View):
     def get(self, request, *args, **kwargs):
         category_slug = kwargs.get("category_slug")
         product_slug = kwargs.get("product_slug")
-        product = Product.objects.get(slug=product_slug, is_available=True)
-        is_cart = CartItem.objects.filter(cart__cart_id=_cart_id(request), product=product).exists()
-
+        try:
+            product = Product.objects.get(slug=product_slug, is_available=True)
+            is_cart = CartItem.objects.filter(cart__cart_id=_cart_id(request), product=product).exists()
+        except Exception as e:
+            raise e
+        if request.user.is_authenticated:
+            try:
+                orderproduct = OrderProduct.objects.filter(user=request.user,product_id=product.id).exists()
+            except OrderProduct.DoesNotExist:
+                orderproduct=None
+        else:
+            orderproduct=None
+        product_gallery = ProductGallery.objects.filter(product_id=product.id)
+        reviews=ReviewRating.objects.filter(product_id=product.id,status=True)
         context = {
             "product": product,
             "is_cart": is_cart,
-        }
+            "orderproduct":orderproduct,
+            "reviews":reviews,
+            "product_gallery":product_gallery
+         }
         return render(request, "store/product_detail.html", context)
 
 # email not sending not used
@@ -76,3 +92,51 @@ def search(request):
         }
     return render(request, "store/store.html", context)
 
+
+def submit_review(request, product_id):
+    url = request.META.get('HTTP_REFERER')
+    if request.method == 'POST':
+        try:
+            reviews = ReviewRating.objects.get(user__id=request.user.id, product__id=product_id)
+            form = ReviewForm(request.POST, instance=reviews)
+            form.save()
+            messages.success(request, 'Thank you! Your review has been updated.')
+            return redirect(url)
+        except ReviewRating.DoesNotExist:
+            form = ReviewForm(request.POST)
+            if form.is_valid():
+                data = ReviewRating()
+                data.subject = form.cleaned_data['subject']
+                data.rating = form.cleaned_data['rating']
+                data.review = form.cleaned_data['review']
+                data.ip = request.META.get('REMOTE_ADDR')
+                data.product_id = product_id
+                data.user_id = request.user.id
+                data.save()
+                messages.success(request, 'Thank you! Your review has been submitted.')
+                return redirect(url)
+
+# def submit_review(request,product_id):
+#     url = request.META.get('HTTP_REFERER')
+#     if request.method=="POST":
+#         try:
+#             reviews = ReviewRating.objects.get(user__id=request.user.id,product__id=product_id) 
+#             #double underscore first underscore for atibute in Reviewrsting amd seconf underscore for 
+#             #to go to the foreinkey and get the id of product and user 
+#             form=ReviewForm(request.POST,instance=reviews)#why instance bcoz if user already posted areview fot the same prodduct we need to update the review,without instance we will be creating a new one
+#             form.save()
+#             messages.success(request,"Thank You.Your review has been updated!")
+#             return redirect (url)
+#         except ReviewRating.DoesNotExist:
+#             form = ReviewForm(request.POST)
+#             if form.is_valid():
+#                 data = ReviewRating
+#                 data.subject=form.cleaned_data["subject"]
+#                 data.rating = form.cleaned_data["rating"]
+#                 data.review = form.cleaned_data["review"]
+#                 data.ip = request.META.get("REMOTE_ADDR")
+#                 data.product_id =product_id
+#                 data.user_id = request.user.id
+#                 data.save()
+#                 messages.success(request,"Thank You.Your review has been submitted!")
+#                 return redirect(url)
